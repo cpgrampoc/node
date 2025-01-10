@@ -1,0 +1,22 @@
+{
+  "name": "cpgrampocbotnodejs",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "cpgrampocbotnodejs": "file:",
+    "express": "^4.21.2",
+    "natural": "^8.0.1",
+    "openai": "^4.76.3",
+    "pg": "^8.13.1"
+  }
+}
