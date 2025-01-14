@@ -28,7 +28,7 @@ app.use(cors({
 // PostgreSQL connection
 const pool = new Pool({
   user: 'cpgram_poc',
-  host: '13.203.120.124',
+  host: '192.168.28.2',
   database: 'cpgrampoc_db',
   password: 'cpgram@321',
   port: 5432,
