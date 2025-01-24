@@ -236,13 +236,13 @@ async function insertIntoGrievanceTable(data) {
   let combinedResult = {}
     const query = `
         INSERT INTO t_cpgram_grievance_new (description_en,description_other,raised_by,mobile_no,assign_by,assign_to,status,
-        grievance_id,field_1,tracking_link,deptid,country,state,district,address,address_2,pincode,gender,email_id,name,channel,type,modified_date)
-        VALUES ($1, $2, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,null)
+        grievance_id,field_1,tracking_link,deptid,country,state,district,address,address_2,pincode,gender,email_id,name,channel,type,modified_date,probable_resolution,probable_root_cause,sentiment,sentiment_percent,summary)
+        VALUES ($1, $2, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
         RETURNING *;  -- Return all columns of the newly inserted row`;
     const values = [data.description_en, data?.description_other,data?.raised_by,
             data?.mobileNo,data?.assign_by,data?.assign_to,data?.type=='Grievance'?'Pending':'Closed',generateUniqueIdWithRandomness(),
             JSON.stringify(data?.field_details),'',data?.deptid,data?.country,data?.state,data?.district,data?.address,data?.address2,
-            data?.pinCode,data?.gender,data?.emailId,data?.name,data?.channel,data?.type];
+            data?.pinCode,data?.gender,data?.emailId,data?.name,data?.channel,data?.type,null, data?.probable_resolution, data?.probable_root_cause, data?.sentiment, data?.sentiment_percent, data?.summary];
     const result = await pool.query(query, values);
     // console.log("result===",result)
     let workflowRes = [];
@@ -905,10 +905,10 @@ app.post('/cpgram-application-service/user/fetchUsersByUserTypes', async (req, r
     res.status(500).send('Error generating response');
   }
 });
-async function checkIsSuggestionOrGrievance(text) {
+async function checkIsSuggestionOrGrievance(text,attributes) {
   const apiKey = process.env.OPENAI_API_KEY; // Replace with your API key
   const endpoint = "https://api.openai.com/v1/chat/completions";
-  let dummy = "mobile_no,mobile_network_provider";
+  let dummy = attributes;
   const payload = {
     model: "gpt-3.5-turbo",
     messages: [
@@ -989,11 +989,11 @@ async function checkIsSuggestionOrGrievance(text) {
 }
 // /cpgram-application-service/user/fetchUsersByUserTypes
 app.post('/cpgram-application-service/grievance/checkSuggestionOrGrievance', async (req, res) => {
-  const { data } = req.body;
+  const { data, attributes } = req.body;
 
   try {
     if(data) {
-      let result = await checkIsSuggestionOrGrievance(data);
+      let result = await checkIsSuggestionOrGrievance(data,attributes);
       res.status(200).json({
         status: 200,
         message: 'Classification done successfully!',
