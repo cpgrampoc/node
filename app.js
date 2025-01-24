@@ -28,11 +28,11 @@ app.use(cors({
 
 // PostgreSQL connection
 const pool = new Pool({
-  user: 'cpgram_poc',
-  host: '103.15.83.48',
-  database: 'cpgrampoc_db',
-  password: 'cpgram@321',
-  port: 5432,
+  user: process.env.user,
+  host: process.env.host,
+  database: process.env.database,
+  password: process.env.password,
+  port: process.env.port,
 });
 
 const documents = [
