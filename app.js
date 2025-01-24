@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const { Configuration, OpenAIApi,OpenAI } = require('openai');
 const natural = require('natural');
 const cors = require('cors');
+const { default: axios } = require('axios');
 require('dotenv').config();
 // import { Configuration, OpenAIApi } from 'openai';
 
@@ -48,7 +49,7 @@ const tokenizer = new natural.WordTokenizer();
 
   const generateEmbeddingsAndInsert = async () => {
     try {
-      const res = await pool.query('SELECT id, description FROM m_cpgram_categories');
+      const res = await pool.query('SELECT id, description FROM m_demo_cpgram_categories where embedding is null');
       console.log(`Found ${res.rows.length} rows for embeddings generation...`);
       for (const row of res.rows) {
         const embeddingResponse = await openai.embeddings.create({
@@ -63,8 +64,8 @@ const tokenizer = new natural.WordTokenizer();
             const embeddingString = `[${embeddingArray.join(', ')}]`;
   
             // Store the embedding in the database
-            await pool.query('UPDATE m_cpgram_categories SET embedding = $1 WHERE id = $2', [embeddingString, row.id]);
-            console.log(`Successfully stored embedding for ID: ${row.id}`);
+            await pool.query('UPDATE m_demo_cpgram_categories SET embedding = $1 WHERE id = $2 and embedding is null', [embeddingString, row.id]);
+            console.log(`Successfully stored embedding for ID: ${row.id}--Description: ${row.description}`);
           } else {
             console.error(`No embedding returned for ID: ${row.id}`);
           }
@@ -81,14 +82,14 @@ const tokenizer = new natural.WordTokenizer();
     }
   };
   
-//   generateEmbeddingsAndInsert();
+  // generateEmbeddingsAndInsert();
 
 
 async function searchDocuments(queryEmbedding, limit = 25) {
     try {
         const similarityThreshold = 0.8; // Define a similarity threshold (1 - distance)
         const result = await pool.query(
-          `select id, code, description,parent,stage,field_details,monitoringcode, 1 - (embedding <=> $1) AS rank from m_demo_cpgram_categories mdcc 
+          `select id, code, description,parent,stage,field_details,monitoringcode,response_time,appeal_time, 1 - (embedding <=> $1) AS rank from m_demo_cpgram_categories mdcc 
             where stage=3 and parent in (select id from m_demo_cpgram_categories mdcc 
             where stage=2 and parent in (select id from m_demo_cpgram_categories mdcc where stage=1
             order by embedding <=> $1 limit 3)
@@ -105,13 +106,13 @@ async function searchDocuments(queryEmbedding, limit = 25) {
         const combinedResults = [];
         for (const row of result.rows) {
             const secondQueryResult = await pool.query(
-                `SELECT id, code, description,parent,stage,field_details,monitoringcode
+                `SELECT id, code, description,parent,stage,field_details,monitoringcode,response_time,appeal_time
                     FROM m_demo_cpgram_categories WHERE id = $1`,
                 [row.parent]
             );
             for (const row1 of secondQueryResult.rows) {
                 const thirdQueryResult = await pool.query(
-                    `SELECT id, code, description,parent,stage,field_details,monitoringcode
+                    `SELECT id, code, description,parent,stage,field_details,monitoringcode,response_time,appeal_time
                         FROM m_demo_cpgram_categories WHERE id = $1`,
                     [row1.parent]
                 );
@@ -222,17 +223,23 @@ function generateUniqueIdWithRandomness() {
   const randomPart = Math.floor(Math.random() * 100000); // Random number
   return `GR-${timestamp}`;
 }
+function generateUniqueAppealIdWithRandomness() {
+  const now = new Date();
+  const timestamp = now.getTime(); // Milliseconds since 1970
+  const randomPart = Math.floor(Math.random() * 100000); // Random number
+  return `APL-${timestamp}`;
+}
 async function insertIntoGrievanceTable(data) {
   let combinedResult = {}
     const query = `
         INSERT INTO t_cpgram_grievance_new (description_en,description_other,raised_by,mobile_no,assign_by,assign_to,status,
-        grievance_id,field_1,tracking_link,deptid,country,state,district,address,address_2,pincode,gender,email_id,name)
-        VALUES ($1, $2, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+        grievance_id,field_1,tracking_link,deptid,country,state,district,address,address_2,pincode,gender,email_id,name,channel,type,modified_date)
+        VALUES ($1, $2, $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,null)
         RETURNING *;  -- Return all columns of the newly inserted row`;
     const values = [data.description_en, data?.description_other,data?.raised_by,
-            data?.mobileNo,data?.assign_by,data?.assign_to,'Pending',generateUniqueIdWithRandomness(),
+            data?.mobileNo,data?.assign_by,data?.assign_to,data?.type=='Grievance'?'Pending':'Closed',generateUniqueIdWithRandomness(),
             JSON.stringify(data?.field_details),'',data?.deptid,data?.country,data?.state,data?.district,data?.address,data?.address2,
-            data?.pinCode,data?.gender,data?.emailId,data?.name];
+            data?.pinCode,data?.gender,data?.emailId,data?.name,data?.channel,data?.type];
     const result = await pool.query(query, values);
     // console.log("result===",result)
     let workflowRes = [];
@@ -245,62 +252,62 @@ async function insertIntoGrievanceTable(data) {
     const values1 = [data?.assign_by,data?.assign_to,'Pending','','Create',result.rows[0]?.id];
     workflowRes = await pool.query(query1, values1);
 
-    const query2 = `
-        INSERT INTO t_cpgram_notfication (description,is_seen,grievance_id)
-        VALUES ($1,$2, $3)
-        RETURNING *;  -- Return all columns of the newly inserted row`;
-    const values2 = ['Grievance raised',false,result.rows[0]?.id];
-    notificationRes = await pool.query(query2, values2);
+    // const query2 = `
+    //     INSERT INTO t_cpgram_notfication (description,is_seen,grievance_id,assign_by,assign_to)
+    //     VALUES ($1,$2, $3, $4, $5)
+    //     RETURNING *;  -- Return all columns of the newly inserted row`;
+    // const values2 = ['Grievance raised',false,result.rows[0]?.id,data?.assign_by,data?.assign_to];
+    // notificationRes = await pool.query(query2, values2);
     }
     combinedResult = {
       grievaneData : result.rows[0],
       workflowData : workflowRes?.rows[0],
-      notificationRes: notificationRes?.rows[0]
+      // notificationRes: notificationRes?.rows[0]
     }
     return combinedResult;
 }
-async function getGrievanceTableData(data) {
-  try{
-    let result=[];
-    if(data?.userId) {
-       if(data?.grievanceId) {
-        result = await pool.query(
-          `SELECT *
-              FROM t_cpgram_grievance_new WHERE id = $1 AND raised_by = $2 order by created_at desc`,
-          [data?.grievanceId,data?.userId]
-        )
-      } else {
-        result = await pool.query(
-          `SELECT * FROM t_cpgram_grievance_new WHERE raised_by = $1 order by created_at desc`,
-          [data?.userId]
-        )
-      }
-    } else if(data?.grievanceId) {
-      result = await pool.query(
-        `SELECT *
-            FROM t_cpgram_grievance_new WHERE grievance_id = $1 order by created_at desc`,
-        [data?.grievanceId]
-      )
-    }else if(data?.assign_to) {
-      result = await pool.query(
-        `SELECT * FROM t_cpgram_grievance_new WHERE assign_to = $1 order by created_at desc`,
-        [data?.assign_to]
-      )
-    } else if(data?.user_type=='Nodal') {
-      result = await pool.query(
-        `select * from t_cpgram_grievance_new tcgn where deptid in (select id from m_demo_cpgram_categories mdcc where orgcode = $1) order by created_at desc`,
-        [data?.orgcode]
-      )
-    }else if(data?.user_type=='Super Admin') {
-      result = await pool.query(
-        `select * from t_cpgram_grievance_new tcgn order by created_at desc`
-      )
-    }
-    return result?.rows;
-  } catch(error){
 
-  }
+async function insertIntoAppealTable(data) {
+  let combinedResult = {};
+  const query = `
+        INSERT INTO t_cpgram_appeal (description,assign_by,assign_to,status,raised_by,grievance_id,channel,appeal_id)
+        VALUES ($1, $2, $3,$4,$5,$6,$7,$8)
+        RETURNING *;  -- Return all columns of the newly inserted row`;
+    const values = [data.appeal_description,data?.assign_by,data?.assign_to,data?.status,data?.raised_by,data?.grievance_table_id,data?.channel,generateUniqueAppealIdWithRandomness()];
+    const result = await pool.query(query, values);
+    // console.log("result===",result)
+    let workflowRes = [];
+    let notificationRes = [];
+    if(result.rows[0]?.id && data?.grievance_table_id) {
+      const query1 = `
+       UPDATE t_cpgram_grievance_new SET status=$1,feedback_description=$2,is_satisfied=$3,is_appeal=$4,appeal_description=$5,appeal_id=$6 WHERE id = $7
+        RETURNING *;  -- Return all columns of the newly inserted row`;
+        const values1 = [data?.status,data?.feedback_description,data?.is_satisfied,data?.is_appeal,data?.appeal_description,result.rows[0]?.id,
+        data?.grievance_table_id];
+        const result1 = await pool.query(query1, values1);
+      const query3 = `
+      INSERT INTO t_cpgram_appeal_workflow (assign_by,assign_to,status,comments,grievance_id,appeal_id,action)
+        VALUES ($1, $2, $3,$4,$5,$6,$7)
+        RETURNING *;  -- Return all columns of the newly inserted row`;
+      const values3 = [data?.assign_by, data?.assign_to,data?.status,data?.comments,
+              data?.grievance_table_id,result.rows[0]?.id,data?.action];
+              workflowRes = await pool.query(query3, values3);
+
+    // const query2 = `
+    //     INSERT INTO t_cpgram_notfication (description,is_seen,grievance_id,appeal_id,assign_by,assign_to)
+    //     VALUES ($1,$2, $3,$4,$5,$6)
+    //     RETURNING *;  -- Return all columns of the newly inserted row`;
+    // const values2 = ['Appeal raised',false,data?.grievance_table_id,result.rows[0]?.id,data?.assign_by, data?.assign_to];
+    // notificationRes = await pool.query(query2, values2);
+    }
+    combinedResult = {
+      appealData : result.rows[0],
+      appealWorkflowData : workflowRes?.rows[0],
+      // notificationRes: notificationRes?.rows[0]
+    }
+    return combinedResult;
 }
+
 
 app.post('/cpgram-application-service/onboard/process', async (req, res) => {
     const { onboardDemoDTO } = req.body;
@@ -371,19 +378,40 @@ app.post('/cpgram-application-service/grievance/create', async (req, res) => {
     }
 });
 
+app.post('/cpgram-application-service/appeal/create', async (req, res) => {
+  const { data } = req.body;
+  try {
+      let combinedResult = {}
+    if(data) {
+      let row1 = await insertIntoAppealTable(data);
+      combinedResult = row1
+    }
+    
+    // Send bot response
+    res.status(200).json({
+      success: true,
+      message: 'Appeal registered successfully!',
+      response: combinedResult
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error generating response');
+  }
+});
+
 async function getCategoriesTableDataById(id) {
   result = await pool.query(
     `WITH RECURSIVE node_path AS (
-        SELECT id, code, description, parent,stage
+        SELECT id, code, description, parent,stage,response_time,appeal_time
         FROM m_demo_cpgram_categories
         WHERE id in (
             SELECT A.id from (
-                SELECT id, code, description,parent,stage
+                SELECT id, code, description,parent,stage,response_time,appeal_time
                 FROM m_demo_cpgram_categories where id = $1
             ) A
         )
         UNION ALL
-        SELECT h.id, h.code, h.description, h.parent, h.stage
+        SELECT h.id, h.code, h.description, h.parent, h.stage,h.response_time,h.appeal_time
         FROM m_demo_cpgram_categories h
         INNER JOIN node_path np ON h.id = np.parent
       )
@@ -391,6 +419,7 @@ async function getCategoriesTableDataById(id) {
       FROM node_path;`,
     [id]
   )
+  // console.log("result?.rows===",result?.rows)
   return result?.rows;
       
 }
@@ -401,8 +430,15 @@ async function getAssignToDetails(id) {
   )
   return result?.rows[0];
 }
+async function getAssignByDetails(id) {
+  let result = await pool.query(
+    `SELECT * FROM m_user_master WHERE id = $1`,
+    [id]
+  )
+  return result?.rows[0];
+}
 async function getGrievanceWorkflowDetails(greivance_table_id) {
-  console.log("greivance_table_id==",greivance_table_id)
+  // console.log("greivance_table_id==",greivance_table_id)
   let result = await pool.query(
     `SELECT 
       gw.id,
@@ -429,12 +465,97 @@ async function getGrievanceWorkflowDetails(greivance_table_id) {
   );
   return result?.rows;
 }
+async function getAppealWorkflowDetails(appeal_id,grievance_id) {
+  let result = await pool.query(
+    `SELECT 
+      aw.id,
+      aw.comments,
+      aw.assign_by,
+      aw.assign_to,
+      aw.status,
+      aw.created_at,
+      aw.grievance_id,
+      aw.appeal_id,
+      aw.action,
+      um.name as employee_name,
+      um.user_type as employee_type,
+      um.email as employee_email,
+      um.mobile_no as employee_mobile_no,
+      um1.name as assign_by_employee_name,
+      um1.user_type as assign_by_employee_type,
+      um1.email as assign_by_employee_email,
+      um1.mobile_no as assign_by_employee_mobile_no
+      FROM t_cpgram_appeal_workflow aw
+      left JOIN m_user_master um ON CAST(aw.assign_to AS BIGINT) = um.id
+      left JOIN m_user_master um1 ON CAST(aw.assign_by AS BIGINT) = um1.id
+      WHERE aw.grievance_id=$1 and aw.appeal_id=$2 order by aw.created_at asc`,
+      [grievance_id,appeal_id]
+  );
+  return result?.rows;
+}
+async function getAppealDetails(id) {
+  let result = await pool.query(
+    `SELECT * FROM t_cpgram_appeal WHERE id = $1`,
+    [id]
+  )
+  return result?.rows[0];
+}
+async function getGrievanceTableData(data) {
+  try{
+    let result=[];
+    if(data?.userId) {
+       if(data?.grievanceId) {
+        result = await pool.query(
+          `SELECT *
+              FROM t_cpgram_grievance_new WHERE id = $1 AND raised_by = $2 order by created_at desc`,
+          [data?.grievanceId,data?.userId]
+        )
+      } else {
+        result = await pool.query(
+          `SELECT * FROM t_cpgram_grievance_new WHERE raised_by = $1 order by created_at desc`,
+          [data?.userId]
+        )
+      }
+    } else if(data?.grievanceId) {
+      result = await pool.query(
+        `SELECT *
+            FROM t_cpgram_grievance_new WHERE grievance_id = $1 order by created_at desc`,
+        [data?.grievanceId]
+      )
+    } else if(data?.user_type=='Nodal') {
+      result = await pool.query(
+        `select * from t_cpgram_grievance_new tcgn where deptid in (select id from m_demo_cpgram_categories mdcc where orgcode = $1) order by created_at desc`,
+        [data?.orgcode]
+      )
+    } else if(data?.user_type=='Appellate Officer' || data?.user_type=='Sub-Appellate Officer') {
+      result = await pool.query(
+        `select * from t_cpgram_grievance_new tcgn where CAST(appeal_id AS BIGINT) in (select id from t_cpgram_appeal tca where assign_to = $1) order by created_at desc`,
+        [data?.assign_to]
+      )
+    }else if(data?.user_type=='Super Admin') {
+      result = await pool.query(
+        `select * from t_cpgram_grievance_new tcgn order by created_at desc`
+      )
+    } else if(data?.assign_to) {
+      result = await pool.query(
+        `SELECT * FROM t_cpgram_grievance_new WHERE assign_to = $1 order by created_at desc`,
+        [data?.assign_to]
+      )
+    }
+    return result?.rows;
+  } catch(error){
+
+  }
+}
 app.post('/cpgram-application-service/grievance/search', async (req, res) => {
   const { data } = req.body;
   try {
     let combinedResult = {};
     let assign_to_details = {};
+    let assign_by_details = {};
     let workflowDetails = [];
+    let appealDetails = {};
+    let appealWorkflowDetails = [];
     if(data) {
       let row1 = await getGrievanceTableData(data);
       // console.log("row1==",row1)
@@ -444,13 +565,28 @@ app.post('/cpgram-application-service/grievance/search', async (req, res) => {
           if(r1?.assign_to) {
             assign_to_details= await getAssignToDetails(r1.assign_to);
           }
+          if(r1?.assign_by) {
+            assign_by_details= await getAssignByDetails(r1.assign_by);
+          }
           if(r1?.id) {
             workflowDetails= await getGrievanceWorkflowDetails(r1.id);
+          }
+          if(r1?.appeal_id) {
+            appealDetails= await getAppealDetails(r1?.appeal_id);
+          }
+          if(r1?.appeal_id && r1?.id) {
+            appealWorkflowDetails= await getAppealWorkflowDetails(r1?.appeal_id, r1?.id);
           }
           if(r1.deptid) {
           let catData= await getCategoriesTableDataById(r1.deptid);
           let combineDescription = '';
+          let stage_3_details;
+          let stage_2_details;
+          let stage_1_details;
           if(catData && catData.length>0) {
+            stage_1_details = [catData[catData.length-1]];
+            stage_2_details = [catData[catData.length-2]];
+            stage_3_details = catData[catData.length-3]
             let i=catData.length-1
             
             for(i; i>=0; i--) {
@@ -462,13 +598,25 @@ app.post('/cpgram-application-service/grievance/search', async (req, res) => {
               }
             }
             r1.category = combineDescription
-          
+            r1.categoryDetails = {
+              stage_1_details : stage_1_details,
+              stage_2_details : stage_2_details,
+              stage_3_details: stage_3_details
+            }
           }
           return {
             ...r1,
             category: combineDescription,
+            categoryDetails:{
+              stage_1_details : stage_1_details,
+              stage_2_details : stage_2_details,
+              stage_3_details: stage_3_details
+            },
             assign_to_details: assign_to_details,
-            workflowDetails: workflowDetails
+            assign_by_details: assign_by_details,
+            workflowDetails: workflowDetails,
+            appealDetails: appealDetails,
+            appealWorkflowDetails: appealWorkflowDetails
           }
           }
           
@@ -491,7 +639,7 @@ app.post('/cpgram-application-service/grievance/search', async (req, res) => {
 });
 async function getOnBoardDataById(id) {
     const result = await pool.query(
-        `SELECT id, code, description,parent,stage,field_details
+        `SELECT id, code, description,parent,stage,field_details,response_time,appeal_time
             FROM m_demo_cpgram_categories 
             WHERE id = $1`,
         [id]
@@ -499,13 +647,13 @@ async function getOnBoardDataById(id) {
     const combinedResults = [];
     for (const row of result.rows) {
         const secondQueryResult = await pool.query(
-            `SELECT id, code, description,parent,stage
+            `SELECT id, code, description,parent,stage,response_time,appeal_time
                 FROM m_demo_cpgram_categories WHERE id = $1`,
             [row.parent]
         );
         for (const row1 of secondQueryResult.rows) {
             const thirdQueryResult = await pool.query(
-                `SELECT id, code, description,parent,stage
+                `SELECT id, code, description,parent,stage,response_time,appeal_time
                     FROM m_demo_cpgram_categories WHERE id = $1`,
                 [row1.parent]
             );
@@ -548,10 +696,10 @@ app.post('/cpgram-application-service/getOnboardDataById', async (req, res) => {
 async function updateGrievance(data) {
   let combinedResults = {};
   const query1 = `
-       UPDATE t_cpgram_grievance_new SET assign_by = $1,assign_to=$2,status=$3 WHERE id = $4
+       UPDATE t_cpgram_grievance_new SET assign_by = $1,assign_to=$2,status=$3,feedback_description=$4,is_satisfied=$5,is_appeal=$6,appeal_description=$7,modified_date=$8 WHERE id = $9
         RETURNING *;  -- Return all columns of the newly inserted row`;
-    const values1 = [data?.assign_by, data?.assign_to,data?.status,
-            data?.grievance_table_id];
+    const values1 = [data?.assign_by, data?.assign_to,data?.status,data?.feedback_description,data?.is_satisfied,data?.is_appeal,data?.appeal_description,
+            new Date(),data?.grievance_table_id];
     const result1 = await pool.query(query1, values1);
     // const query2 = `
     //    UPDATE t_grievance_workflow set action = $1, forwarded_by=$2 where id = $3
@@ -576,14 +724,24 @@ async function updateGrievance(data) {
     //           data?.grievance_table_id,data?.action];
     //   result3 = await pool.query(query3, values3);
     // }
-
-    const query3 = `
+    if(data?.is_appeal) {
+      const query3 = `
+       INSERT INTO t_cpgram_appeal_workflow (assign_by,assign_to,status,comments,grievance_id,appeal_id,action)
+        VALUES ($1, $2, $3,$4,$5,$6,$7)
+        RETURNING *;  -- Return all columns of the newly inserted row`;
+      const values3 = [data?.assign_by, data?.assign_to,data?.status,data?.comments,
+              data?.grievance_table_id,data?.appeal_table_id,data?.action];
+      result3 = await pool.query(query3, values3);
+    } else {
+      const query3 = `
        INSERT INTO t_grievance_workflow (assign_by,assign_to,status,comments,grievance_id,action)
         VALUES ($1, $2, $3,$4,$5,$6)
         RETURNING *;  -- Return all columns of the newly inserted row`;
       const values3 = [data?.assign_by, data?.assign_to,data?.status,data?.comments,
               data?.grievance_table_id,data?.action];
       result3 = await pool.query(query3, values3);
+    }
+    
     
     combinedResults ={
       grievaneData : result1.rows,
@@ -614,9 +772,78 @@ app.post('/cpgram-application-service/grievance/update', async (req, res) => {
     res.status(500).send('Error generating response');
   }
 });
+async function updateAppeal(data) {
+  let combinedResults = {};
+  const query1 = `
+       UPDATE t_cpgram_appeal SET assign_by = $1,assign_to=$2,status=$3 WHERE id = $4
+        RETURNING *;  -- Return all columns of the newly inserted row`;
+    const values1 = [data?.assign_by, data?.assign_to,data?.status,
+            data?.appeal_table_id];
+    const result1 = await pool.query(query1, values1);
+    // const query2 = `
+    //    UPDATE t_grievance_workflow set action = $1, forwarded_by=$2 where id = $3
+    //     RETURNING *;  -- Return all columns of the newly inserted row`;
+    // const values2 = [data?.action, data?.assign_by, data?.workflow_table_id];
+    // const result2 = await pool.query(query2, values2);
+    let result3 = []
+    // if(data?.action == 'Approve' && data?.action == 'Reject') {
+    //   const query3 = `
+    //    INSERT INTO t_grievance_workflow (assign_by,assign_to,status,comments,grievance_id,action)
+    //     VALUES ($1, $2, $3,$4,$5,$6)
+    //     RETURNING *;  -- Return all columns of the newly inserted row`;
+    //   const values3 = [data?.assign_by, data?.assign_to,data?.status,data?.comments,
+    //           data?.grievance_table_id,data?.action];
+    //   result3 = await pool.query(query3, values3);
+    // } else {
+    //   const query3 = `
+    //    INSERT INTO t_grievance_workflow (assign_by,assign_to,status,comments,grievance_id,action)
+    //     VALUES ($1, $2, $3,$4,$5,$6)
+    //     RETURNING *;  -- Return all columns of the newly inserted row`;
+    //   const values3 = [data?.assign_by, data?.assign_to,data?.status,data?.comments,
+    //           data?.grievance_table_id,data?.action];
+    //   result3 = await pool.query(query3, values3);
+    // }
+    const query3 = `
+       INSERT INTO t_cpgram_appeal_workflow (assign_by,assign_to,status,comments,grievance_id,appeal_id,action)
+        VALUES ($1, $2, $3,$4,$5,$6,$7)
+        RETURNING *;  -- Return all columns of the newly inserted row`;
+      const values3 = [data?.assign_by, data?.assign_to,data?.status,data?.comments,
+              data?.grievance_table_id,data?.appeal_table_id,data?.action];
+      result3 = await pool.query(query3, values3);
+    
+    
+    combinedResults ={
+      appealData : result1.rows,
+      appealWorkflowData: result3.rows
+    }
+    return combinedResults;
+}
+app.post('/cpgram-application-service/appeal/update', async (req, res) => {
+  const { data } = req.body;
+
+  try {
+    if(data) {
+      let result = await updateAppeal(data);
+      res.status(200).json({
+        success: true,
+        message: `Appeal ${data?.action} successfully!`,
+        response: result
+      });
+    } else {
+      res.status(400).send('Id not found');
+    }
+    
+    
+    // Send bot response
+  //   res.json({ response: botResponse });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error generating response');
+  }
+});
 async function getDepartment(params) {
   const query1 = `
-       SELECT id,description as name,orgcode,parent,stage,monitoringcode,field_details from m_demo_cpgram_categories WHERE parent = $1`;
+       SELECT id,description as name,orgcode,parent,stage,monitoringcode,field_details,response_time,appeal_time from m_demo_cpgram_categories WHERE parent = $1`;
     const values1 = [params?.parent];
     const result1 = await pool.query(query1, values1);
     return result1.rows;
@@ -662,6 +889,73 @@ app.post('/cpgram-application-service/user/fetchUsersByUserTypes', async (req, r
         status: 200,
         message: 'User fetched successfully!',
         user: result
+      });
+    } else {
+      res.status(400).send('Id not found');
+    }
+    
+    
+    // Send bot response
+  //   res.json({ response: botResponse });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error generating response');
+  }
+});
+async function checkIsSuggestionOrGrievance(text) {
+  const apiKey = process.env.OPENAI_API_KEY; // Replace with your API key
+  const endpoint = "https://api.openai.com/v1/chat/completions";
+
+  const payload = {
+    model: "gpt-3.5-turbo",
+    messages: [
+      {
+        role: "system",
+        content: "You are a helpful assistant that classifies text as either a 'Suggestion' or a 'Grievance'."
+      },
+      {
+        role: "user",
+        content: `Classify the following text as either a 'Suggestion' or a 'Grievance':\n\n'${text}'`
+      }
+    ],
+    max_tokens: 10
+  };
+
+  try {
+    const response = await axios.post(endpoint, payload, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      }
+    });
+    let txt = response.data.choices[0].message.content.trim();
+    let returnText = '';
+    if(txt.includes('Gri')) {
+      returnText='Grievance'
+    }
+    if(txt.includes('Sug')) {
+      returnText='Suggestion'
+    }
+
+    return returnText;
+    // .content.trim();
+    // .data.choices[0].message.content.trim();
+  } catch (error) {
+    console.error("Error with OpenAI API:", error);
+    return null;
+  }
+}
+// /cpgram-application-service/user/fetchUsersByUserTypes
+app.post('/cpgram-application-service/grievance/checkSuggestionOrGrievance', async (req, res) => {
+  const { data } = req.body;
+
+  try {
+    if(data) {
+      let result = await checkIsSuggestionOrGrievance(data);
+      res.status(200).json({
+        status: 200,
+        message: 'Classification done successfully!',
+        response: result
       });
     } else {
       res.status(400).send('Id not found');
