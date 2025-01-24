@@ -19,12 +19,15 @@ require('dotenv').config();
 const app = express();
 app.use(bodyParser.json());
 
+// Allow all origins
+app.use(cors());
+
 // Allow CORS for all origins or specific origins
-app.use(cors({
-    origin: 'http://localhost:4200', // Replace with your Angular app's URL
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'], // Adjust based on your needs
-  }));
+// app.use(cors({
+//     origin: 'http://localhost:4200', // Replace with your Angular app's URL
+//     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//     allowedHeaders: ['Content-Type', 'Authorization'], // Adjust based on your needs
+//   }));
 
 // PostgreSQL connection
 const pool = new Pool({
@@ -532,7 +535,7 @@ async function getGrievanceTableData(data) {
         `select * from t_cpgram_grievance_new tcgn where CAST(appeal_id AS BIGINT) in (select id from t_cpgram_appeal tca where assign_to = $1) order by created_at desc`,
         [data?.assign_to]
       )
-    }else if(data?.user_type=='Super Admin') {
+    }else if(data?.user_type=='Admin') {
       result = await pool.query(
         `select * from t_cpgram_grievance_new tcgn order by created_at desc`
       )
@@ -905,20 +908,57 @@ app.post('/cpgram-application-service/user/fetchUsersByUserTypes', async (req, r
 async function checkIsSuggestionOrGrievance(text) {
   const apiKey = process.env.OPENAI_API_KEY; // Replace with your API key
   const endpoint = "https://api.openai.com/v1/chat/completions";
-
+  let dummy = "mobile_no,mobile_network_provider";
   const payload = {
     model: "gpt-3.5-turbo",
     messages: [
-      {
-        role: "system",
-        content: "You are a helpful assistant that classifies text as either a 'Suggestion' or a 'Grievance'."
-      },
+      // {
+      //   role: "system",
+      //   content: "You are a helpful assistant that classifies text as either a 'Suggestion' or a 'Grievance'."
+      // },
+      // {
+      //   role: "user",
+      //   content: `Classify the following text as either a 'Suggestion' or a 'Grievance':\n\n'${text}'`
+      // }
       {
         role: "user",
-        content: `Classify the following text as either a 'Suggestion' or a 'Grievance':\n\n'${text}'`
+        content: `For the '${text}' input perform the following activities
+ 
+        1. extract the sentiment from the text as either positive or negative along with its extent in percentage
+        
+        2. categorize the text as either grievance or suggestion depending on the context in the text.
+        
+        3. if the type is grievance, derive a generic probable root cause without any geographical mention from the context in the text, else keep the value as blank
+        
+        4. extract '${dummy}' from the given text. If neither of the values are found in the text, keep them as blank
+        
+        5. summarize the text to make it more menaingful incorporating the extracted attribute values from above point no 4 and dont mention about sentiment
+        
+        6. for the probable root cause from point no 3, recommend a probable resolution in not more than 100 words
+        
+        map the output in format
+        
+        {
+          "sentiment":enter the value of sentiment from point no 1,
+          "sentiment_percent":enter the value of sentiment percentage from point no 1,
+          "type":enter the value of Type from point no 2,
+          "probable_root_cause":enter the probable root cause from point no 3,
+          "probable_resolution":enter the probable resolution from point no 6,
+          "enter the label of attribute 1 from point no 4 in lowercase" :enter the value of attribute 1 from point no 4,
+          "enter the label of attribute 2 from point no 4 in lowercase" :enter the value of attribute 2 from point no 4,
+          "enter the label of attribute 3 from point no 4 in lowercase" :enter the value of attribute 3 from point no 4,
+          "summary":enter the summarized text value from point no 5,
+        }
+        
+        
+        respond only with the output format in structured JSON
+        
+        OUTPUT:`
       }
+
+      
     ],
-    max_tokens: 10
+    // max_tokens: 10
   };
 
   try {
@@ -929,15 +969,17 @@ async function checkIsSuggestionOrGrievance(text) {
       }
     });
     let txt = response.data.choices[0].message.content.trim();
-    let returnText = '';
-    if(txt.includes('Gri')) {
-      returnText='Grievance'
-    }
-    if(txt.includes('Sug')) {
-      returnText='Suggestion'
-    }
+    txt = JSON.parse(txt)
+    // .choices[0].message.content.trim();
+    // let returnText = '';
+    // if(txt.includes('Gri')) {
+    //   returnText='Grievance'
+    // }
+    // if(txt.includes('Sug')) {
+    //   returnText='Suggestion'
+    // }
 
-    return returnText;
+    return txt;
     // .content.trim();
     // .data.choices[0].message.content.trim();
   } catch (error) {
