@@ -171,29 +171,56 @@ app.post('/search', async (req, res) => {
 });
 
 // Handle chatbot messages
-app.post('/chat', async (req, res) => {
-  const { userId, message } = req.body;
+app.post('/grievance/chat', async (req, res) => {
+  const { message } = req.body;
 
   try {
-    // Generate a response (OpenAI GPT example)
-    const aiResponse = await openai.createChatCompletion({
-      model: 'gpt-3.5-turbo',
-      messages: [{ role: 'user', content: message }],
-    });
+    // Generate a response using OpenAI's GPT model
+    const trackingRegex = /status of (GR-\d+)/i;
+    const match = message.match(trackingRegex);
 
-    const botResponse = aiResponse.data.choices[0].message.content;
+    if (match) {
+        const grievanceId = match[1]; // Extract the grievance ID (e.g., GR12332)
+        const trackingLink = `http://103.15.83.51/grievance-tracking/${grievanceId}`; // Replace with your actual tracking URL
 
-    // Store chat in PostgreSQL
-    await pool.query(
-      `INSERT INTO chat_history (user_id, message, response) VALUES ($1, $2, $3)`,
-      [userId, message, botResponse]
+        const response = `Please click on <a href="${trackingLink}" target="_blank">${grievanceId}</a> to get the latest status.`;
+        return res.json({ response });
+    }
+    const openaiResponse = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+            model: 'gpt-3.5-turbo',
+            messages: [
+                {
+                    role: 'system',
+                    content: 'You are a helpful chatbot for the CPGRAMS grievance system. Respond to user queries about lodging grievances and checking grievance statuses.',
+                },
+                { role: 'user', content: message },
+            ],
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+                'Content-Type': 'application/json',
+            },
+        }
     );
 
-    // Send bot response
-    res.json({ response: botResponse });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Error generating response');
+    // Extract the bot's reply
+    let botReply = openaiResponse.data.choices[0].message.content.trim();
+    botReply = botReply.replace(
+      'https://pgportal.gov.in',
+      'http://103.15.83.51'
+    );
+    botReply = botReply.replace(
+      'Lodge a Grievance',
+      'File your Grievance'
+    );
+
+    res.json({ response: botReply });
+  } catch (error) {
+      console.error('Error communicating with OpenAI:', error.message);
+      res.status(500).json({ error: 'Failed to get response from NLP engine.' });
   }
 });
 
